@@ -1,0 +1,889 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NSE Stock Monitor — ESP32 + Cloud</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0a0a0f;--surface:#111118;--s2:#1a1a24;--border:#2a2a3a;
+  --accent:#00ff88;--blue:#3388ff;--text:#e8e8f0;--muted:#666680;
+  --up:#00ff88;--down:#ff3366;--amber:#ffaa00;--purple:#aa77ff;
+  --mono:'Space Mono',monospace;--sans:'Syne',sans-serif;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;overflow-x:hidden}
+body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:repeating-linear-gradient(0deg,transparent,transparent 39px,rgba(0,255,136,.02) 39px,rgba(0,255,136,.02) 40px),
+  repeating-linear-gradient(90deg,transparent,transparent 39px,rgba(0,255,136,.01) 39px,rgba(0,255,136,.01) 40px)}
+.wrap{position:relative;z-index:1;max-width:1280px;margin:0 auto;padding:0 20px 80px}
+
+/* Header */
+header{display:flex;align-items:center;justify-content:space-between;padding:22px 0 28px;border-bottom:1px solid var(--border);margin-bottom:24px;flex-wrap:wrap;gap:10px}
+.logo{display:flex;align-items:center;gap:10px}
+.logo-icon{width:28px;height:28px;background:var(--accent);clip-path:polygon(50% 0%,100% 100%,0% 100%);animation:pulse 3s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.7;transform:scale(.92)}}
+.logo h1{font-size:16px;font-weight:800;letter-spacing:-.5px}
+.logo h1 span{color:var(--accent)}
+.hdr-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.mkt{font-family:var(--mono);font-size:10px;padding:5px 11px;border-radius:2px;border:1px solid;letter-spacing:1px;text-transform:uppercase}
+.mkt.open{border-color:var(--up);color:var(--up);background:rgba(0,255,136,.08)}
+.mkt.closed{border-color:var(--down);color:var(--down);background:rgba(255,51,102,.08)}
+.mkt.pre{border-color:var(--amber);color:var(--amber);background:rgba(255,170,0,.08)}
+.cloud-badge{font-family:var(--mono);font-size:9px;padding:5px 10px;border-radius:2px;border:1px solid var(--purple);color:var(--purple);background:rgba(170,119,255,.08);letter-spacing:1px}
+.audio-pick label{font-family:var(--mono);font-size:9px;letter-spacing:1px;color:var(--muted);
+  background:var(--s2);border:1px solid var(--border);padding:5px 10px;border-radius:2px;cursor:pointer;transition:border-color .2s}
+.audio-pick label:hover{border-color:var(--accent);color:var(--accent)}
+.audio-pick input{display:none}
+#aname{font-family:var(--mono);font-size:9px;color:var(--muted);max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Ticker */
+.ticker-wrap{overflow:hidden;border-top:1px solid var(--border);border-bottom:1px solid var(--border);margin-bottom:22px;background:var(--surface);padding:8px 0}
+.ticker{display:flex;gap:36px;animation:tick 35s linear infinite;white-space:nowrap;width:max-content}
+@keyframes tick{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+.ti{font-family:var(--mono);font-size:10px;color:var(--muted);display:flex;gap:6px}
+.ti .s{color:var(--text);font-weight:700}.ti .c.up{color:var(--up)}.ti .c.down{color:var(--down)}
+
+/* IP row */
+.ip-row{display:flex;align-items:center;gap:8px;margin-bottom:18px;flex-wrap:wrap}
+.ip-row label{font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:1px;white-space:nowrap}
+.ip-row input{background:var(--s2);border:1px solid var(--border);border-radius:3px;color:var(--text);
+  font-family:var(--mono);font-size:12px;padding:8px 12px;outline:none;width:160px}
+.ip-row input:focus{border-color:var(--blue)}
+.render-input{width:300px !important}
+.btn-sms{font-family:var(--mono);font-size:9px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;
+  padding:8px 14px;border:none;border-radius:3px;cursor:pointer;transition:all .15s;background:var(--amber);color:#000}
+.btn-sms:hover{background:#ffcc00;transform:translateY(-1px)}
+.sms-status{font-family:var(--mono);font-size:9px;padding:5px 10px;border-radius:2px}
+.sms-status.ok{color:var(--up);background:rgba(0,255,136,.08);border:1px solid rgba(0,255,136,.3)}
+.sms-status.err{color:var(--down);background:rgba(255,51,102,.08);border:1px solid rgba(255,51,102,.3)}
+
+/* Grid */
+.grid{display:grid;grid-template-columns:300px 1fr 270px;gap:16px}
+@media(max-width:1000px){.grid{grid-template-columns:1fr 1fr}}
+@media(max-width:620px){.grid{grid-template-columns:1fr}}
+
+/* Panel */
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:20px;position:relative;overflow:hidden}
+.panel::before{content:'';position:absolute;top:0;left:0;right:0;height:2px}
+.panel.g::before{background:linear-gradient(90deg,var(--accent),transparent)}
+.panel.b::before{background:linear-gradient(90deg,var(--blue),transparent)}
+.panel.a::before{background:linear-gradient(90deg,var(--amber),transparent)}
+.panel.p::before{background:linear-gradient(90deg,var(--purple),transparent)}
+.ptitle{font-size:9px;font-family:var(--mono);letter-spacing:2px;color:var(--muted);text-transform:uppercase;margin-bottom:14px}
+
+/* Search */
+.sbox{position:relative;margin-bottom:10px}
+.sbox input{width:100%;background:var(--s2);border:1px solid var(--border);border-radius:3px;
+  color:var(--text);font-family:var(--mono);font-size:13px;padding:10px 13px 10px 36px;
+  outline:none;transition:border-color .2s;text-transform:uppercase}
+.sbox input::placeholder{color:var(--muted);text-transform:none}
+.sbox input:focus{border-color:var(--accent)}
+.sico{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:14px;pointer-events:none}
+.hint{font-family:var(--mono);font-size:9px;color:var(--muted);margin-bottom:9px}
+#results{max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:3px}
+#results::-webkit-scrollbar{width:3px}#results::-webkit-scrollbar-thumb{background:var(--border)}
+.ri{display:flex;align-items:center;justify-content:space-between;padding:8px 11px;
+  background:var(--s2);border:1px solid var(--border);border-radius:3px;cursor:pointer;
+  transition:all .12s;animation:fi .12s ease}
+@keyframes fi{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
+.ri:hover{border-color:var(--accent);background:rgba(0,255,136,.05)}
+.ri.sel{border-color:var(--accent);background:rgba(0,255,136,.1)}
+.rsym{font-family:var(--mono);font-size:12px;font-weight:700;color:var(--accent)}
+.rname{font-size:10px;color:var(--muted);margin-top:1px}
+.rsec{font-family:var(--mono);font-size:8px;color:var(--muted);background:var(--surface);border:1px solid var(--border);padding:2px 6px;border-radius:2px}
+.empty{text-align:center;padding:28px 14px;color:var(--muted);font-family:var(--mono);font-size:11px}
+.empty .big{font-size:24px;display:block;margin-bottom:6px;opacity:.3}
+
+/* Portfolio */
+.port-section{margin-top:14px;border-top:1px solid var(--border);padding-top:12px}
+.port-title{font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:2px;margin-bottom:8px}
+#port-list{display:flex;flex-direction:column;gap:4px;max-height:240px;overflow-y:auto}
+#port-list::-webkit-scrollbar{width:3px}#port-list::-webkit-scrollbar-thumb{background:var(--border)}
+.pi{display:flex;align-items:center;justify-content:space-between;padding:7px 10px;
+  background:var(--s2);border:1px solid var(--border);border-radius:3px;flex-wrap:wrap;gap:4px}
+.pisym{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--accent)}
+.pipct{font-family:var(--mono);font-size:10px}
+.pipct.up{color:var(--up)}.pipct.down{color:var(--down)}
+.pibtn{font-family:var(--mono);font-size:9px;background:rgba(255,51,102,.15);border:1px solid rgba(255,51,102,.3);
+  color:var(--down);padding:2px 7px;border-radius:2px;cursor:pointer;transition:all .15s}
+.pibtn:hover{background:rgba(255,51,102,.3)}
+.port-empty{font-family:var(--mono);font-size:10px;color:var(--muted);text-align:center;padding:14px}
+
+/* Signal badges */
+.sig{font-family:var(--mono);font-size:8px;letter-spacing:1px;padding:2px 6px;border-radius:2px;border:1px solid;text-transform:uppercase}
+.sig.bull{color:var(--up);border-color:var(--up);background:rgba(0,255,136,.08)}
+.sig.bear{color:var(--down);border-color:var(--down);background:rgba(255,51,102,.08)}
+.sig.neu{color:var(--amber);border-color:var(--amber);background:rgba(255,170,0,.08)}
+.sig.anom{color:var(--purple);border-color:var(--purple);background:rgba(170,119,255,.08)}
+
+/* Preview */
+.shdr{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px}
+.ssym{font-family:var(--mono);font-size:20px;font-weight:700;color:var(--blue);letter-spacing:-1px}
+.sname{font-size:11px;color:var(--muted);margin-top:2px}
+.pval{font-family:var(--mono);font-size:20px;font-weight:700;text-align:right}
+.pval.up{color:var(--up)}.pval.down{color:var(--down)}
+.pchg{font-family:var(--mono);font-size:10px;margin-top:2px;text-align:right}
+.pchg.up{color:var(--up)}.pchg.down{color:var(--down)}
+.spark-wrap{margin-bottom:12px}
+.slbl{font-family:var(--mono);font-size:8px;color:var(--muted);letter-spacing:1px;margin-bottom:4px}
+#sparkline{width:100%;height:44px}
+.metrics{display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;margin-bottom:12px}
+.metric{background:var(--s2);border:1px solid var(--border);border-radius:3px;padding:8px 10px}
+.mlbl{font-family:var(--mono);font-size:8px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:3px}
+.mval{font-family:var(--mono);font-size:12px;font-weight:700}
+.sigs{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:14px}
+.add-section{border-top:1px solid var(--border);padding-top:13px}
+.add-label{font-family:var(--mono);font-size:8px;color:var(--muted);letter-spacing:1px;margin-bottom:7px}
+.btn-add{font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;
+  padding:11px 16px;border:none;border-radius:3px;cursor:pointer;transition:all .15s;width:100%;
+  background:var(--accent);color:#000}
+.btn-add:hover{background:#00cc6a;transform:translateY(-1px)}
+.btn-add:disabled{background:var(--border);color:var(--muted);cursor:not-allowed;transform:none}
+.add-status{font-family:var(--mono);font-size:10px;margin-top:7px;padding:7px 10px;border-radius:3px;display:none;white-space:pre-wrap}
+.add-status.ok{display:block;color:var(--up);background:rgba(0,255,136,.08);border:1px solid rgba(0,255,136,.3)}
+.add-status.err{display:block;color:var(--down);background:rgba(255,51,102,.08);border:1px solid rgba(255,51,102,.3)}
+#ph{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:240px;text-align:center;color:var(--muted)}
+.phg{font-size:32px;margin-bottom:10px;opacity:.15}
+#ph p{font-family:var(--mono);font-size:10px;line-height:1.9}
+
+/* Cloud signals panel */
+.cloud-sig-list{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.csi{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;
+  background:var(--s2);border:1px solid var(--border);border-radius:3px}
+.csisym{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--accent)}
+.csi-reason{font-family:var(--mono);font-size:8px;color:var(--muted);margin-top:2px;line-height:1.5}
+.csi-z{font-family:var(--mono);font-size:9px;color:var(--muted)}
+.no-signals{font-family:var(--mono);font-size:10px;color:var(--muted);text-align:center;padding:20px}
+
+/* OLED */
+.oled-outer{background:#000;border:2px solid #222;border-radius:8px;padding:9px;
+  box-shadow:0 0 0 1px #111,inset 0 0 14px rgba(0,0,0,.9)}
+.oled-lbl{font-family:var(--mono);font-size:7px;color:#2a3a2a;letter-spacing:2px;margin-bottom:5px}
+.oled-scr{background:#020a02;border-radius:4px;padding:11px 10px;font-family:var(--mono);
+  position:relative;overflow:hidden;min-height:160px;box-shadow:inset 0 0 22px rgba(0,255,100,.03)}
+.oled-scr::before{content:'';position:absolute;inset:0;z-index:2;pointer-events:none;
+  background-image:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,.18) 3px,rgba(0,0,0,.18) 4px),
+  repeating-linear-gradient(90deg,transparent,transparent 3px,rgba(0,0,0,.12) 3px,rgba(0,0,0,.12) 4px)}
+.oled-sess{position:absolute;top:8px;right:8px;z-index:3;font-size:7px;letter-spacing:1px;
+  padding:2px 4px;border-radius:2px;font-family:var(--mono)}
+.oled-sess.live{background:rgba(0,255,100,.12);color:#00ff88;border:1px solid rgba(0,255,100,.28)}
+.oled-sess.closed{background:rgba(255,50,80,.08);color:#ff4466;border:1px solid rgba(255,50,80,.18)}
+.oled-sess.pre{background:rgba(255,170,0,.08);color:#ffaa00;border:1px solid rgba(255,170,0,.18)}
+.oi{position:relative;z-index:1}
+.osym{font-size:9px;color:#88ee88;letter-spacing:2px;font-weight:700;margin-bottom:2px}
+.oprice{font-size:18px;font-weight:700;color:#fff;margin-bottom:1px;line-height:1.1}
+.ochg{font-size:10px;font-weight:700;margin-bottom:4px}
+.ochg.up{color:#00ff88}.ochg.down{color:#ff4466}
+.odiv{border:none;border-top:1px solid #0f2a0f;margin:4px 0}
+.or2{display:flex;justify-content:space-between;margin-bottom:1px}
+.osm{font-size:7px;color:#448844}.osm.hi{color:#88ee88}
+/* Cloud signal row on OLED sim */
+.osig-row{display:flex;align-items:center;gap:5px;margin-top:4px}
+.osig{font-size:7px;font-weight:700;padding:1px 4px;border-radius:2px}
+.osig.BUY{background:rgba(0,255,136,.2);color:#00ff88}
+.osig.SELL{background:rgba(255,51,102,.2);color:#ff4466}
+.osig.HOLD{background:rgba(255,170,0,.15);color:#ffaa00}
+.osig.anom{background:rgba(170,119,255,.2);color:#aa77ff}
+.obar-wrap{margin-top:5px}
+.obar-lbl{font-size:6px;color:#336633;margin-bottom:2px}
+.obar-bg{background:#050f05;border:1px solid #0f2a0f;border-radius:2px;height:6px;width:100%}
+.obar-fill{height:100%;border-radius:2px;background:#00aa55;transition:width .5s ease}
+.ond{color:#1a3a1a;font-size:8px;text-align:center;padding:30px 0;line-height:2}
+.odots{display:flex;gap:3px;justify-content:center;margin-top:6px;position:relative;z-index:1}
+.odot{width:3px;height:3px;border-radius:50%;background:#0f2a0f;transition:background .3s}
+.odot.active{background:#00ff88}
+.otime{font-size:6px;color:#225522;margin-top:4px;text-align:center;position:relative;z-index:1}
+
+/* LED + polling */
+.led-row{display:flex;align-items:center;gap:7px;margin-bottom:10px}
+.led{width:10px;height:10px;border-radius:50%;background:#111;transition:all .3s;flex-shrink:0;border:1px solid #222}
+.led.on-g{background:#00ff88;box-shadow:0 0 8px #00ff88;border-color:#00ff88}
+.led.on-r{background:#ff3366;box-shadow:0 0 8px #ff3366;border-color:#ff3366}
+.led.on-p{background:#aa77ff;box-shadow:0 0 8px #aa77ff;border-color:#aa77ff}
+.led-lbl{font-family:var(--mono);font-size:9px;color:var(--muted)}
+.poll-row{display:flex;align-items:center;gap:6px;margin-bottom:10px}
+.pdot{width:6px;height:6px;border-radius:50%;background:var(--accent);animation:blink 1.5s ease-in-out infinite;opacity:.2}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.1}}
+.plbl{font-family:var(--mono);font-size:9px;color:var(--muted)}
+
+/* Alert log */
+.alog{margin-top:10px}
+.altitle{font-family:var(--mono);font-size:8px;color:var(--muted);letter-spacing:2px;margin-bottom:6px}
+#afeed{display:flex;flex-direction:column;gap:3px;max-height:160px;overflow-y:auto}
+#afeed::-webkit-scrollbar{width:2px}#afeed::-webkit-scrollbar-thumb{background:var(--border)}
+.ae{font-family:var(--mono);font-size:9px;padding:5px 8px;border-radius:2px;border-left:2px solid;animation:fi .2s ease;line-height:1.5}
+.ae.up{color:#00cc66;border-color:#00ff88;background:rgba(0,255,136,.06)}
+.ae.down{color:#cc2244;border-color:#ff3366;background:rgba(255,51,102,.06)}
+.ae.vol{color:#ccaa00;border-color:#ffaa00;background:rgba(255,170,0,.06)}
+.ae.info{color:var(--muted);border-color:var(--border);background:var(--s2)}
+.ae.cloud{color:#9966dd;border-color:#aa77ff;background:rgba(170,119,255,.06)}
+.at{opacity:.4;margin-right:5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<!-- Header -->
+<header>
+  <div class="logo">
+    <div class="logo-icon"></div>
+    <h1>NSE<span>.</span>ESP32 <span style="font-size:11px;color:var(--purple)">+ CLOUD</span></h1>
+  </div>
+  <div class="hdr-right">
+    <div class="cloud-badge" id="cloud-badge">◌ RENDER OFFLINE</div>
+    <div class="audio-pick">
+      <label for="af">♪ ALERT SOUND</label>
+      <input type="file" id="af" accept="audio/*" onchange="loadAudio(this)">
+      <span id="aname">no file</span>
+    </div>
+    <div id="mkt" class="mkt closed">○ MARKET CLOSED</div>
+  </div>
+</header>
+
+<!-- Ticker -->
+<div class="ticker-wrap"><div class="ticker" id="ticker"></div></div>
+
+<!-- Config row -->
+<div class="ip-row">
+  <label>// ESP32 IP</label>
+  <input type="text" id="esp-ip" placeholder="192.168.1.xxx" value="192.168.1.100" oninput="saveIP()">
+  <label>// RENDER URL</label>
+  <input type="text" id="render-url" class="render-input" placeholder="https://your-app.onrender.com" oninput="saveRenderURL()">
+  <button class="btn-sms" onclick="sendSMSNow()">📩 SEND SMS</button>
+  <span id="sms-st" class="sms-status" style="display:none"></span>
+</div>
+
+<!-- 3-col grid -->
+<div class="grid">
+
+  <!-- COL 1: Search + Portfolio -->
+  <div class="panel g">
+    <div class="ptitle">// Search & Portfolio</div>
+    <div class="sbox">
+      <span class="sico">⌕</span>
+      <input type="text" id="sinput" placeholder="Type symbol or company…" autocomplete="off" spellcheck="false">
+    </div>
+    <p class="hint">Try: REL · TCS · INFY · HDFC · WIPRO</p>
+    <div id="results">
+      <div class="empty"><span class="big">⌨</span>Start typing to search</div>
+    </div>
+    <div class="port-section">
+      <div class="port-title">// MY PORTFOLIO (<span id="pcount">0</span>/10)</div>
+      <div id="port-list">
+        <div class="port-empty">No stocks added yet</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- COL 2: Preview + Add -->
+  <div class="panel b">
+    <div class="ptitle">// Stock Preview + Add to ESP32</div>
+    <div id="ph">
+      <div class="phg">📈</div>
+      <p>Search a stock on the left<br>preview its live data<br>then add it to your portfolio</p>
+    </div>
+    <div id="ppanel" style="display:none">
+      <div class="shdr">
+        <div>
+          <div class="ssym" id="psym">—</div>
+          <div class="sname" id="pname">—</div>
+        </div>
+        <div>
+          <div class="pval" id="pprice">—</div>
+          <div class="pchg" id="pchg">—</div>
+        </div>
+      </div>
+      <div class="spark-wrap">
+        <div class="slbl">// INTRADAY (5-min bars)</div>
+        <svg id="sparkline" viewBox="0 0 300 44" preserveAspectRatio="none">
+          <polygon id="sfill" fill="rgba(51,136,255,.1)" points=""/>
+          <polyline id="sline" fill="none" stroke="#3388ff" stroke-width="1.5" points=""/>
+        </svg>
+      </div>
+      <div class="metrics">
+        <div class="metric"><div class="mlbl">Open</div><div class="mval" id="mopen">—</div></div>
+        <div class="metric"><div class="mlbl">High</div><div class="mval" id="mhigh">—</div></div>
+        <div class="metric"><div class="mlbl">Low</div><div class="mval" id="mlow">—</div></div>
+        <div class="metric"><div class="mlbl">Volume</div><div class="mval" id="mvol">—</div></div>
+        <div class="metric"><div class="mlbl">52W High</div><div class="mval" id="m52h">—</div></div>
+        <div class="metric"><div class="mlbl">52W Low</div><div class="mval" id="m52l">—</div></div>
+      </div>
+      <div class="sigs" id="psigs"></div>
+
+      <!-- Cloud signal for this stock -->
+      <div id="cloud-sig-preview" style="margin-bottom:12px;display:none">
+        <div style="font-family:var(--mono);font-size:8px;color:var(--muted);letter-spacing:1px;margin-bottom:5px">// CLOUD ML SIGNAL</div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <span id="csp-sig" class="sig neu">—</span>
+          <span id="csp-anom" class="sig anom" style="display:none">⚠ ANOMALY</span>
+          <span id="csp-z" style="font-family:var(--mono);font-size:9px;color:var(--muted)"></span>
+        </div>
+        <div id="csp-reason" style="font-family:var(--mono);font-size:9px;color:var(--muted);margin-top:4px;line-height:1.5"></div>
+      </div>
+
+      <div class="add-section">
+        <div class="add-label">// Add to ESP32 Portfolio</div>
+        <button class="btn-add" id="addbtn" onclick="addToESP32()">＋ ADD TO PORTFOLIO</button>
+        <div class="add-status" id="addst"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- COL 3: OLED + Alerts -->
+  <div class="panel a">
+    <div class="ptitle">// ESP32 Live Monitor</div>
+    <div class="poll-row">
+      <div class="pdot" id="pdot"></div>
+      <span class="plbl" id="plbl">Enter ESP32 IP above</span>
+    </div>
+    <div class="led-row">
+      <div class="led" id="lg"></div><span class="led-lbl">▲ UP</span>
+      <div class="led" id="lr" style="margin-left:8px"></div><span class="led-lbl">▼ DOWN</span>
+      <div class="led" id="lp" style="margin-left:8px"></div><span class="led-lbl">⚠ ANOM</span>
+    </div>
+
+    <!-- OLED sim -->
+    <div class="oled-outer">
+      <div class="oled-lbl">// SSD1306 0.96" OLED</div>
+      <div class="oled-scr">
+        <div class="oled-sess closed" id="osess">CLOSED</div>
+        <div class="ond" id="ond">WAITING FOR ESP32<br><br>Add stocks to<br>begin monitoring</div>
+        <div class="oi" id="oc" style="display:none">
+          <div class="osym" id="osym">—</div>
+          <div class="oprice" id="oprice">₹—</div>
+          <div class="ochg" id="ochg">—</div>
+          <hr class="odiv">
+          <div class="or2">
+            <span class="osm">O:<span id="oopen">—</span></span>
+            <span class="osm hi">H:<span id="ohigh">—</span></span>
+            <span class="osm">L:<span id="olow">—</span></span>
+          </div>
+          <div class="or2" style="margin-top:2px">
+            <span class="osm">V:<span id="ovol">—</span></span>
+            <span class="osm">Spk:<span id="ospk">—</span></span>
+          </div>
+          <!-- Cloud signal on OLED sim -->
+          <div class="osig-row">
+            <span id="osig" class="osig HOLD">HOLD</span>
+            <span id="oanom" class="osig anom" style="display:none">Z-ANOM</span>
+            <span class="osm" id="ozscore"></span>
+          </div>
+          <div class="obar-wrap">
+            <div class="obar-lbl">% FROM OPEN</div>
+            <div class="obar-bg"><div class="obar-fill" id="obar" style="width:50%"></div></div>
+          </div>
+        </div>
+        <div class="odots" id="odots"></div>
+        <div class="otime" id="otime"></div>
+      </div>
+    </div>
+
+    <!-- Alert log -->
+    <div class="alog">
+      <div class="altitle">// ALERT LOG</div>
+      <div id="afeed">
+        <div class="ae info"><span class="at">--:--</span>System ready</div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /grid -->
+
+<!-- Cloud Signals Panel (full width below grid) -->
+<div class="panel p" style="margin-top:16px">
+  <div class="ptitle">// Cloud ML Signals — Render Analysis</div>
+  <div id="cloud-signals-wrap">
+    <div class="no-signals">No cloud signals yet — add stocks and wait for first cloud poll</div>
+  </div>
+</div>
+
+</div><!-- /wrap -->
+
+<script>
+// ── NSE Stock DB ──────────────────────────────────────────────────────────────
+const DB=[
+  {sym:"RELIANCE",   name:"Reliance Industries Ltd",         sec:"Energy"},
+  {sym:"TCS",        name:"Tata Consultancy Services",       sec:"IT"},
+  {sym:"HDFCBANK",   name:"HDFC Bank Ltd",                   sec:"Banking"},
+  {sym:"INFY",       name:"Infosys Ltd",                     sec:"IT"},
+  {sym:"ICICIBANK",  name:"ICICI Bank Ltd",                  sec:"Banking"},
+  {sym:"HINDUNILVR", name:"Hindustan Unilever Ltd",          sec:"FMCG"},
+  {sym:"ITC",        name:"ITC Ltd",                         sec:"FMCG"},
+  {sym:"SBIN",       name:"State Bank of India",             sec:"Banking"},
+  {sym:"BHARTIARTL", name:"Bharti Airtel Ltd",               sec:"Telecom"},
+  {sym:"WIPRO",      name:"Wipro Ltd",                       sec:"IT"},
+  {sym:"LT",         name:"Larsen & Toubro Ltd",             sec:"Infra"},
+  {sym:"KOTAKBANK",  name:"Kotak Mahindra Bank",             sec:"Banking"},
+  {sym:"BAJFINANCE", name:"Bajaj Finance Ltd",               sec:"Finance"},
+  {sym:"HCLTECH",    name:"HCL Technologies Ltd",            sec:"IT"},
+  {sym:"ASIANPAINT", name:"Asian Paints Ltd",                sec:"Consumer"},
+  {sym:"MARUTI",     name:"Maruti Suzuki India Ltd",         sec:"Auto"},
+  {sym:"SUNPHARMA",  name:"Sun Pharmaceutical Industries",   sec:"Pharma"},
+  {sym:"TITAN",      name:"Titan Company Ltd",               sec:"Consumer"},
+  {sym:"NESTLEIND",  name:"Nestle India Ltd",                sec:"FMCG"},
+  {sym:"ULTRACEMCO", name:"UltraTech Cement Ltd",            sec:"Materials"},
+  {sym:"BAJAJFINSV", name:"Bajaj Finserv Ltd",               sec:"Finance"},
+  {sym:"AXISBANK",   name:"Axis Bank Ltd",                   sec:"Banking"},
+  {sym:"DRREDDY",    name:"Dr. Reddy's Laboratories",        sec:"Pharma"},
+  {sym:"TECHM",      name:"Tech Mahindra Ltd",               sec:"IT"},
+  {sym:"POWERGRID",  name:"Power Grid Corporation",          sec:"Utilities"},
+  {sym:"NTPC",       name:"NTPC Ltd",                        sec:"Utilities"},
+  {sym:"ONGC",       name:"Oil and Natural Gas Corporation", sec:"Energy"},
+  {sym:"TATAMOTORS", name:"Tata Motors Ltd",                 sec:"Auto"},
+  {sym:"TATASTEEL",  name:"Tata Steel Ltd",                  sec:"Materials"},
+  {sym:"ADANIENT",   name:"Adani Enterprises Ltd",           sec:"Conglomerate"},
+  {sym:"ADANIPORTS", name:"Adani Ports & SEZ Ltd",           sec:"Logistics"},
+  {sym:"COALINDIA",  name:"Coal India Ltd",                  sec:"Energy"},
+  {sym:"DIVISLAB",   name:"Divi's Laboratories Ltd",         sec:"Pharma"},
+  {sym:"EICHERMOT",  name:"Eicher Motors Ltd",               sec:"Auto"},
+  {sym:"GRASIM",     name:"Grasim Industries Ltd",           sec:"Materials"},
+  {sym:"HEROMOTOCO", name:"Hero MotoCorp Ltd",               sec:"Auto"},
+  {sym:"HINDALCO",   name:"Hindalco Industries Ltd",         sec:"Materials"},
+  {sym:"JSWSTEEL",   name:"JSW Steel Ltd",                   sec:"Materials"},
+  {sym:"M&M",        name:"Mahindra & Mahindra Ltd",         sec:"Auto"},
+  {sym:"SBILIFE",    name:"SBI Life Insurance Company",      sec:"Insurance"},
+  {sym:"HDFCLIFE",   name:"HDFC Life Insurance Company",     sec:"Insurance"},
+  {sym:"CIPLA",      name:"Cipla Ltd",                       sec:"Pharma"},
+  {sym:"BPCL",       name:"Bharat Petroleum Corporation",    sec:"Energy"},
+  {sym:"INDUSINDBK", name:"IndusInd Bank Ltd",               sec:"Banking"},
+  {sym:"TATACONSUM", name:"Tata Consumer Products Ltd",      sec:"FMCG"},
+  {sym:"APOLLOHOSP", name:"Apollo Hospitals Enterprise",     sec:"Healthcare"},
+  {sym:"BRITANNIA",  name:"Britannia Industries Ltd",        sec:"FMCG"},
+  {sym:"UPL",        name:"UPL Ltd",                        sec:"Agri"},
+  {sym:"SHREECEM",   name:"Shree Cement Ltd",                sec:"Materials"},
+  {sym:"BAJAJ-AUTO", name:"Bajaj Auto Ltd",                  sec:"Auto"},
+];
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let selected=null, audio=null;
+let pollTmr=null, oledRotTmr=null, cloudTmr=null;
+let liveStocks=[], oledPage=0;
+let alertFired={};
+let portfolio=[];
+let cloudSignals={};  // sym -> signal object from Render
+
+// ── Restore saved config ──────────────────────────────────────────────────────
+(()=>{
+  const ip=localStorage.getItem('esp_ip');
+  if(ip) document.getElementById('esp-ip').value=ip;
+  const ru=localStorage.getItem('render_url');
+  if(ru) document.getElementById('render-url').value=ru;
+})();
+function saveIP(){ localStorage.setItem('esp_ip', document.getElementById('esp-ip').value.trim()); }
+function saveRenderURL(){ localStorage.setItem('render_url', document.getElementById('render-url').value.trim()); }
+function getIP(){ return document.getElementById('esp-ip').value.trim(); }
+function getRenderURL(){ return document.getElementById('render-url').value.trim().replace(/\/$/, ''); }
+
+// ── Ticker ────────────────────────────────────────────────────────────────────
+function buildTicker(){
+  const items=DB.slice(0,18).map(s=>{
+    const c=(Math.random()*4-2).toFixed(2),cls=parseFloat(c)>=0?'up':'down',sg=parseFloat(c)>=0?'+':'';
+    return `<div class="ti"><span class="s">${s.sym}</span><span class="c ${cls}">${sg}${c}%</span></div>`;
+  }).join('');
+  document.getElementById('ticker').innerHTML=items+items;
+}
+buildTicker();
+
+// ── Market ────────────────────────────────────────────────────────────────────
+function updateMkt(){
+  const now=new Date(),ist=new Date(now.toLocaleString('en-US',{timeZone:'Asia/Kolkata'}));
+  const m=ist.getHours()*60+ist.getMinutes();
+  const el=document.getElementById('mkt'),os=document.getElementById('osess');
+  if(m>=525&&m<555){el.className='mkt pre';el.textContent='◐ PRE-OPEN';os.className='oled-sess pre';os.textContent='PRE';}
+  else if(m>=555&&m<900){el.className='mkt open';el.textContent='● LIVE MARKET';os.className='oled-sess live';os.textContent='LIVE';}
+  else if(m>=900&&m<930){el.className='mkt pre';el.textContent='◑ PRE-CLOSE';os.className='oled-sess pre';os.textContent='PRE-CL';}
+  else{el.className='mkt closed';el.textContent='○ MARKET CLOSED';os.className='oled-sess closed';os.textContent='CLOSED';}
+}
+updateMkt(); setInterval(updateMkt,30000);
+
+// ── Audio ─────────────────────────────────────────────────────────────────────
+function loadAudio(inp){
+  const f=inp.files[0];if(!f)return;
+  audio=new Audio(URL.createObjectURL(f));
+  audio.preload='auto';
+  document.getElementById('aname').textContent=f.name;
+}
+function playOnce(key){
+  if(alertFired[key])return;
+  alertFired[key]=true;
+  if(audio){audio.currentTime=0;audio.play().catch(()=>{});}
+  setTimeout(()=>{delete alertFired[key];},12000);
+}
+
+// ── Search ────────────────────────────────────────────────────────────────────
+document.getElementById('sinput').addEventListener('input',function(){
+  const q=this.value.trim().toUpperCase();
+  const el=document.getElementById('results');
+  if(!q){el.innerHTML='<div class="empty"><span class="big">⌨</span>Start typing</div>';return;}
+  const m=DB.filter(s=>s.sym.includes(q)||s.name.toUpperCase().includes(q)).slice(0,12);
+  if(!m.length){el.innerHTML=`<div class="empty"><span class="big">∅</span>No match for "${q}"</div>`;return;}
+  el.innerHTML=m.map((s,i)=>`
+    <div class="ri ${selected?.sym===s.sym?'sel':''}" onclick="pick('${s.sym}')" style="animation-delay:${i*20}ms">
+      <div><div class="rsym">${hl(s.sym,q)}</div><div class="rname">${hl(s.name,q)}</div></div>
+      <div class="rsec">${s.sec}</div>
+    </div>`).join('');
+});
+
+function hl(t,q){return t.replace(new RegExp(`(${q})`,'gi'),'<mark style="background:rgba(0,255,136,.22);color:inherit;border-radius:2px;">$1</mark>');}
+
+// ── Pick stock ────────────────────────────────────────────────────────────────
+function pick(sym){
+  selected=DB.find(s=>s.sym===sym);
+  document.querySelectorAll('.ri').forEach(e=>e.classList.remove('sel'));
+  document.getElementById('ph').style.display='none';
+  document.getElementById('ppanel').style.display='block';
+  document.getElementById('psym').textContent=sym;
+  document.getElementById('pname').textContent=selected.name;
+  ['pprice','pchg','mopen','mhigh','mlow','mvol','m52h','m52l'].forEach(id=>document.getElementById(id).textContent='…');
+  document.getElementById('psigs').innerHTML='';
+  const inPort=portfolio.includes(sym);
+  const btn=document.getElementById('addbtn');
+  btn.textContent=inPort?'✓ ALREADY IN PORTFOLIO':'＋ ADD TO PORTFOLIO';
+  btn.disabled=inPort;
+  // Show cloud signal if we have one
+  showCloudSigPreview(sym);
+  doPreview(sym);
+}
+
+function showCloudSigPreview(sym){
+  const wrap=document.getElementById('cloud-sig-preview');
+  const sig=cloudSignals[sym];
+  if(!sig){wrap.style.display='none';return;}
+  wrap.style.display='block';
+  const el=document.getElementById('csp-sig');
+  el.textContent=sig.signal;
+  el.className='sig '+(sig.signal==='BUY'?'bull':sig.signal==='SELL'?'bear':'neu');
+  document.getElementById('csp-anom').style.display=sig.anomaly?'inline':'none';
+  document.getElementById('csp-z').textContent=`Z=${Number(sig.zscore).toFixed(2)}`;
+  document.getElementById('csp-reason').textContent=sig.reason||'';
+}
+
+// ── Yahoo Finance preview ─────────────────────────────────────────────────────
+async function doPreview(sym){
+  try{
+    const url=`https://query1.finance.yahoo.com/v8/finance/chart/${sym}.NS?interval=5m&range=1d`;
+    const proxy=`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+    const r=await fetch(proxy),o=await r.json(),d=JSON.parse(o.contents);
+    const meta=d.chart.result[0].meta,q=d.chart.result[0].indicators.quote[0];
+    const price=meta.regularMarketPrice,open=meta.chartPreviousClose||meta.regularMarketOpen;
+    const high=meta.regularMarketDayHigh,low=meta.regularMarketDayLow,vol=meta.regularMarketVolume;
+    const w52h=meta.fiftyTwoWeekHigh,w52l=meta.fiftyTwoWeekLow;
+    const pct=(price-open)/open*100,isUp=pct>=0;
+    const pe=document.getElementById('pprice'),ce=document.getElementById('pchg');
+    pe.textContent='₹'+price.toFixed(2);pe.className='pval '+(isUp?'up':'down');
+    ce.textContent=(isUp?'+':'')+pct.toFixed(2)+'% from open';ce.className='pchg '+(isUp?'up':'down');
+    document.getElementById('mopen').textContent='₹'+open.toFixed(2);
+    document.getElementById('mhigh').textContent='₹'+high.toFixed(2);
+    document.getElementById('mlow').textContent='₹'+low.toFixed(2);
+    document.getElementById('mvol').textContent=fv(vol);
+    document.getElementById('m52h').textContent=w52h?'₹'+w52h.toFixed(0):'—';
+    document.getElementById('m52l').textContent=w52l?'₹'+w52l.toFixed(0):'—';
+    drawSpark(q.close.filter(v=>v!=null),isUp);
+    buildSigs(pct,vol,price,w52h,w52l,high,low);
+  }catch(e){simPreview();}
+}
+
+function simPreview(){
+  const base=1000+Math.random()*3000,pct=(Math.random()*6-3),price=base*(1+pct/100),isUp=pct>=0;
+  const pe=document.getElementById('pprice'),ce=document.getElementById('pchg');
+  pe.textContent='₹'+price.toFixed(2);pe.className='pval '+(isUp?'up':'down');
+  ce.textContent=(isUp?'+':'')+pct.toFixed(2)+'% (sim)';ce.className='pchg '+(isUp?'up':'down');
+  document.getElementById('mopen').textContent='₹'+base.toFixed(2);
+  document.getElementById('mhigh').textContent='₹'+(price*1.01).toFixed(2);
+  document.getElementById('mlow').textContent='₹'+(price*0.99).toFixed(2);
+  document.getElementById('mvol').textContent=fv(Math.floor(Math.random()*5e6+1e6));
+  document.getElementById('m52h').textContent='₹'+(base*1.3).toFixed(0);
+  document.getElementById('m52l').textContent='₹'+(base*0.7).toFixed(0);
+  const pts=[];let v=base;for(let i=0;i<40;i++){v+=(Math.random()-.49)*v*.005;pts.push(v);}
+  drawSpark(pts,isUp);buildSigs(pct,2e6,price,base*1.3,base*0.7,price*1.01,price*0.99);
+}
+
+function drawSpark(data,isUp){
+  if(!data||data.length<2)return;
+  const W=300,H=44,p=3,mn=Math.min(...data),mx=Math.max(...data);
+  const xS=(W-p*2)/(data.length-1),yS=(H-p*2)/(mx-mn||1);
+  const pts=data.map((v,i)=>`${p+i*xS},${H-p-(v-mn)*yS}`).join(' ');
+  const fill=pts+` ${p+(data.length-1)*xS},${H} ${p},${H}`;
+  const col=isUp?'#00ff88':'#ff3366';
+  document.getElementById('sline').setAttribute('points',pts);
+  document.getElementById('sline').setAttribute('stroke',col);
+  document.getElementById('sfill').setAttribute('points',fill);
+  document.getElementById('sfill').setAttribute('fill',isUp?'rgba(0,255,136,.1)':'rgba(255,51,102,.1)');
+}
+
+function buildSigs(pct,vol,price,w52h,w52l,high,low){
+  const s=[];
+  if(pct>=2)s.push({c:'bull',l:'▲ UPWARD SPIKE'});
+  if(pct<=-2)s.push({c:'bear',l:'▼ DOWNWARD SPIKE'});
+  if(Math.abs(pct)<0.5)s.push({c:'neu',l:'◆ FLAT'});
+  if(vol>3e6)s.push({c:'bull',l:'⚡ HIGH VOLUME'});
+  if(w52h&&price>=w52h*.97)s.push({c:'bull',l:'★ NEAR 52W HIGH'});
+  if(w52l&&price<=w52l*1.03)s.push({c:'bear',l:'▼ NEAR 52W LOW'});
+  if((high-low)/low>.03)s.push({c:'neu',l:'↕ HIGH VOLATILITY'});
+  if(!s.length)s.push({c:'neu',l:'— NORMAL SESSION'});
+  document.getElementById('psigs').innerHTML=s.map(x=>`<span class="sig ${x.c}">${x.l}</span>`).join('');
+}
+
+// ── Add to ESP32 ──────────────────────────────────────────────────────────────
+async function addToESP32(){
+  if(!selected)return;
+  const ip=getIP();
+  if(!ip){setAddSt('err','Enter ESP32 IP first');return;}
+  const btn=document.getElementById('addbtn');
+  btn.disabled=true;btn.textContent='⟳ ADDING…';setAddSt('','');
+  try{
+    const r=await fetch(`http://${ip}/add?symbol=${selected.sym}`,{signal:AbortSignal.timeout(5000)});
+    const txt=await r.text();
+    if(r.ok){
+      setAddSt('ok','✓ '+txt);
+      log('info','Added '+selected.sym+' to ESP32');
+      if(!portfolio.includes(selected.sym)) portfolio.push(selected.sym);
+      updatePortfolioUI();
+      btn.textContent='✓ ALREADY IN PORTFOLIO';
+      startPoll(ip);
+    }else{setAddSt('err','ESP32: '+txt);}
+  }catch(e){
+    setAddSt('err',`Cannot reach ESP32 @ ${ip}\nAdded locally (offline mode)`);
+    if(!portfolio.includes(selected.sym)) portfolio.push(selected.sym);
+    updatePortfolioUI();
+    btn.textContent='✓ ADDED (offline)';
+  }
+}
+
+// ── Remove from ESP32 ─────────────────────────────────────────────────────────
+async function removeFromESP32(sym){
+  const ip=getIP();
+  portfolio=portfolio.filter(s=>s!==sym);
+  liveStocks=liveStocks.filter(s=>s.sym!==sym);
+  updatePortfolioUI();
+  log('info','Removed '+sym);
+  if(!ip)return;
+  try{ await fetch(`http://${ip}/remove?symbol=${sym}`,{signal:AbortSignal.timeout(5000)}); }catch(e){}
+}
+
+// ── Portfolio UI ──────────────────────────────────────────────────────────────
+function updatePortfolioUI(){
+  const el=document.getElementById('port-list');
+  document.getElementById('pcount').textContent=portfolio.length;
+  if(!portfolio.length){el.innerHTML='<div class="port-empty">No stocks added yet</div>';return;}
+  el.innerHTML=portfolio.map(sym=>{
+    const live=liveStocks.find(s=>s.sym===sym);
+    const pct=live?Number(live.pct):null;
+    const pctStr=pct!==null?`<span class="pipct ${pct>=0?'up':'down'}">${pct>=0?'+':''}${pct.toFixed(2)}%</span>`:'<span class="pipct">—</span>';
+    const sig=cloudSignals[sym];
+    const sigBadge=sig?`<span class="sig ${sig.signal==='BUY'?'bull':sig.signal==='SELL'?'bear':'neu'}">${sig.signal}${sig.anomaly?' ⚠':''}</span>`:'';
+    return `<div class="pi" data-sym="${sym}">
+      <div><div class="pisym">${sym}</div></div>
+      ${pctStr}
+      ${sigBadge}
+      <button class="pibtn" onclick="removeFromESP32('${sym}')">✕</button>
+    </div>`;
+  }).join('');
+  if(selected){
+    const inPort=portfolio.includes(selected.sym);
+    const btn=document.getElementById('addbtn');
+    if(btn){btn.textContent=inPort?'✓ ALREADY IN PORTFOLIO':'＋ ADD TO PORTFOLIO';btn.disabled=inPort;}
+  }
+}
+
+// ── Cloud signals fetch ───────────────────────────────────────────────────────
+async function fetchCloudSignals(){
+  const ru=getRenderURL();
+  if(!ru)return;
+  try{
+    const r=await fetch(`${ru}/signals`,{signal:AbortSignal.timeout(8000)});
+    if(!r.ok)throw new Error(r.status);
+    const d=await r.json();
+    const sigs=d.signals||[];
+
+    // Update badge
+    document.getElementById('cloud-badge').textContent='● RENDER ONLINE';
+    document.getElementById('cloud-badge').style.borderColor='var(--up)';
+    document.getElementById('cloud-badge').style.color='var(--up)';
+    document.getElementById('cloud-badge').style.background='rgba(0,255,136,.08)';
+
+    // Store signals
+    sigs.forEach(s=>{ cloudSignals[s.symbol]=s; });
+
+    // Render signals panel
+    renderCloudPanel(sigs);
+
+    // Update portfolio badges
+    updatePortfolioUI();
+
+    // Update preview if stock selected
+    if(selected) showCloudSigPreview(selected.sym);
+
+    // Check anomalies and log
+    sigs.forEach(s=>{
+      if(s.anomaly){ log('cloud',`⚠ ANOMALY: ${s.symbol}  Z=${Number(s.zscore).toFixed(2)}`); setLED(false,false,true); playOnce('anom_'+s.symbol); }
+      if(s.signal==='BUY')  log('cloud',`BUY signal: ${s.symbol}  ${s.reason||''}`);
+      if(s.signal==='SELL') log('cloud',`SELL signal: ${s.symbol}  ${s.reason||''}`);
+    });
+
+  }catch(e){
+    document.getElementById('cloud-badge').textContent='◌ RENDER OFFLINE';
+    document.getElementById('cloud-badge').style.borderColor='var(--down)';
+    document.getElementById('cloud-badge').style.color='var(--down)';
+    document.getElementById('cloud-badge').style.background='rgba(255,51,102,.08)';
+  }
+}
+
+function renderCloudPanel(sigs){
+  const wrap=document.getElementById('cloud-signals-wrap');
+  if(!sigs.length){wrap.innerHTML='<div class="no-signals">No signals yet — ESP32 needs to push data first</div>';return;}
+  wrap.innerHTML=`<div class="cloud-sig-list">${sigs.map(s=>`
+    <div class="csi">
+      <div>
+        <div class="csisym">${s.symbol}</div>
+        <div class="csi-reason">${s.reason||'—'}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+        <span class="sig ${s.signal==='BUY'?'bull':s.signal==='SELL'?'bear':'neu'}">${s.signal}</span>
+        ${s.anomaly?'<span class="sig anom">⚠ ANOMALY</span>':''}
+        <span class="csi-z">Z=${Number(s.zscore).toFixed(2)}</span>
+      </div>
+    </div>`).join('')}
+  </div>`;
+}
+
+// ── Polling (ESP32) ───────────────────────────────────────────────────────────
+function startPoll(ip){
+  if(pollTmr)clearInterval(pollTmr);
+  document.getElementById('pdot').style.opacity='1';
+  pollESP(ip);
+  pollTmr=setInterval(()=>pollESP(ip),15000);
+  if(oledRotTmr)clearInterval(oledRotTmr);
+  oledRotTmr=setInterval(()=>{
+    if(liveStocks.length>1){oledPage=(oledPage+1)%liveStocks.length;renderOled();}
+  },3000);
+  // Start cloud polling
+  if(cloudTmr)clearInterval(cloudTmr);
+  fetchCloudSignals();
+  cloudTmr=setInterval(fetchCloudSignals,20000);
+}
+
+async function pollESP(ip){
+  try{
+    const r=await fetch(`http://${ip}/status`,{signal:AbortSignal.timeout(4000)});
+    const d=await r.json();
+    liveStocks=d.stocks||[];
+    liveStocks.forEach(s=>{
+      if(s.ok&&!portfolio.includes(s.sym)) portfolio.push(s.sym);
+      // Merge cloud signals from ESP32 status if present
+      if(s.signal) cloudSignals[s.sym]={symbol:s.sym,signal:s.signal,anomaly:s.anomaly,zscore:s.zscore,reason:''};
+    });
+    updatePortfolioUI();
+    renderOled();
+    checkAlerts(liveStocks);
+    document.getElementById('plbl').textContent='ESP32 updated '+ts();
+    document.getElementById('otime').textContent=d.time||'';
+  }catch(e){
+    document.getElementById('plbl').textContent='ESP32 offline · '+ts();
+  }
+}
+
+// ── OLED render ───────────────────────────────────────────────────────────────
+function renderOled(){
+  if(!liveStocks.length)return;
+  const s=liveStocks[oledPage%liveStocks.length];
+  if(!s||!s.ok)return;
+  document.getElementById('ond').style.display='none';
+  document.getElementById('oc').style.display='block';
+  document.getElementById('osym').textContent=s.sym;
+  document.getElementById('oprice').textContent='₹'+Number(s.price).toFixed(2);
+  const pct=Number(s.pct),isUp=pct>=0;
+  const ce=document.getElementById('ochg');
+  ce.textContent=(isUp?'+':'')+pct.toFixed(2)+'%';ce.className='ochg '+(isUp?'up':'down');
+  document.getElementById('oopen').textContent=s.open?Number(s.open).toFixed(0):'—';
+  document.getElementById('ohigh').textContent=s.high?Number(s.high).toFixed(0):'—';
+  document.getElementById('olow').textContent=s.low?Number(s.low).toFixed(0):'—';
+  document.getElementById('ovol').textContent=fv(s.vol);
+  const spk=Number(s.spk||0);
+  document.getElementById('ospk').textContent=(spk>=0?'+':'')+spk.toFixed(2)+'%';
+
+  // Cloud signal on OLED sim
+  const sig=cloudSignals[s.sym]||s;
+  const sigEl=document.getElementById('osig');
+  const sigStr=sig.signal||s.signal||'HOLD';
+  sigEl.textContent=sigStr;
+  sigEl.className='osig '+sigStr;
+  const anomEl=document.getElementById('oanom');
+  anomEl.style.display=(sig.anomaly||s.anomaly)?'inline':'none';
+  document.getElementById('ozscore').textContent=sig.zscore!=null?`Z=${Number(sig.zscore).toFixed(1)}`:'';
+
+  const bp=Math.min(100,Math.max(0,(pct+5)/10*100));
+  const bar=document.getElementById('obar');
+  bar.style.width=bp+'%';bar.style.background=isUp?'#00aa55':'#cc2244';
+  if(Math.abs(pct)>=2)setLED(isUp,!isUp,false);
+  const dots=document.getElementById('odots');
+  dots.innerHTML=liveStocks.map((_,i)=>`<div class="odot ${i===oledPage%liveStocks.length?'active':''}"></div>`).join('');
+}
+
+// ── Alert checking ────────────────────────────────────────────────────────────
+function checkAlerts(stocks){
+  stocks.forEach(s=>{
+    if(!s.ok)return;
+    const pct=Number(s.pct),spk=Number(s.spk||0),vr=Number(s.vr||0);
+    if(pct>=2)  {log('up',  `${s.sym} ▲ ${pct.toFixed(2)}% from open`);playOnce('vu_'+s.sym);setLED(true,false,false);}
+    if(pct<=-2) {log('down',`${s.sym} ▼ ${Math.abs(pct).toFixed(2)}% from open`);playOnce('vd_'+s.sym);setLED(false,true,false);}
+    if(Math.abs(spk)>=1){log(spk>0?'up':'down',`${s.sym} sudden ${spk>0?'surge':'drop'} ${Math.abs(spk).toFixed(2)}%`);playOnce('spk_'+s.sym);}
+    if(vr>=2){log('vol',`${s.sym} volume spike ${vr.toFixed(1)}x`);playOnce('vol_'+s.sym);}
+  });
+}
+
+// ── LED sim ───────────────────────────────────────────────────────────────────
+function setLED(g,r,p){
+  const gl=document.getElementById('lg'),rl=document.getElementById('lr'),pl=document.getElementById('lp');
+  gl.className='led'+(g?' on-g':'');
+  rl.className='led'+(r?' on-r':'');
+  pl.className='led'+(p?' on-p':'');
+  if(g||r||p)setTimeout(()=>{gl.className='led';rl.className='led';pl.className='led';},5000);
+}
+
+// ── Send SMS ──────────────────────────────────────────────────────────────────
+async function sendSMSNow(){
+  const ip=getIP();
+  if(!ip){showSMSSt('err','Enter ESP32 IP');return;}
+  showSMSSt('','');
+  try{
+    const r=await fetch(`http://${ip}/sendsms`,{signal:AbortSignal.timeout(8000)});
+    const txt=await r.text();
+    showSMSSt('ok','✓ '+txt);
+    log('info','Manual SMS sent');
+  }catch(e){showSMSSt('err','Cannot reach ESP32 @ '+ip);}
+}
+function showSMSSt(cls,msg){
+  const el=document.getElementById('sms-st');
+  el.className='sms-status'+(cls?' '+cls:'');
+  el.style.display=cls?'inline-block':'none';
+  el.textContent=msg;
+}
+
+// ── Auto-start polling if IP saved ───────────────────────────────────────────
+(()=>{
+  const ip=getIP();
+  if(ip){ startPoll(ip); }
+  // Also start cloud polling independently if render URL saved
+  const ru=getRenderURL();
+  if(ru&&!ip){ fetchCloudSignals(); cloudTmr=setInterval(fetchCloudSignals,20000); }
+})();
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function log(type,msg){
+  const feed=document.getElementById('afeed');
+  const d=document.createElement('div');
+  d.className='ae '+type;
+  d.innerHTML=`<span class="at">${ts()}</span>${msg}`;
+  feed.prepend(d);
+  while(feed.children.length>60)feed.removeChild(feed.lastChild);
+}
+function setAddSt(cls,msg){const e=document.getElementById('addst');e.className='add-status'+(cls?' '+cls:'');e.textContent=msg;}
+function fv(v){if(!v||v==0)return'—';if(v>=1e7)return(v/1e7).toFixed(1)+'Cr';if(v>=1e5)return(v/1e5).toFixed(1)+'L';return Number(v).toLocaleString();}
+function ts(){return new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',second:'2-digit'});}
+</script>
+</body>
+</html>
